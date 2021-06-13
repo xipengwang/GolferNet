@@ -45,7 +45,7 @@ def train(rank, model, state, args):
 
     torch.manual_seed(rank)
     # optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
-    optimizer = optim.RMSprop(model.parameters(), lr=args.lr, weight_decay=1e-8, momentum=0.9)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
     model.to(device)
     train_sampler = None
@@ -98,16 +98,20 @@ def train_epoch(*, epoch, model, device, data_loader, optimizer, args, global_st
             val_epoch(epoch=epoch, model=model, device=device, data_loader=val_loader, optimizer=optimizer, args=args,
                       global_step=global_step, writer=writer, rank=rank)
             for tag, value in model.named_parameters():
-                tag = tag.replace('.', '/')
-                writer.add_histogram('weights/' + tag, value.data.cpu().numpy(), global_step)
-                writer.add_histogram('grads/' + tag, value.grad.data.cpu().numpy(), global_step)
+                pass
+                # print(tag)
+                # tag = tag.replace('.', '/')
+                # writer.add_histogram('weights/' + tag, value.data.cpu().numpy(), global_step)
+                # writer.add_histogram('grads/' + tag, value.grad.data.cpu().numpy(), global_step)
             writer.add_scalar('learning_rate', optimizer.param_groups[0]['lr'], global_step)
             if rank == 0:
-                torch.save(model.state_dict(), args.model+f'-epoch-{epoch}-step-{global_step}')
+                pass
+                # torch.save(model.state_dict(), args.model+f'-epoch-{epoch}-step-{global_step}')
         global_step += 1
     return global_step
 
 def val_epoch(*, epoch, model, device, data_loader, optimizer, args, global_step, writer, rank):
+    return
     model.eval()
     pid = os.getpid()
     criterion = nn.CrossEntropyLoss().to(device)

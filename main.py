@@ -21,7 +21,7 @@ def parse(args):
     parser_train = subparsers.add_parser('train', help='train a network')
     parser_train.add_argument('model', type=str, help='path to output model or checkpoint to resume from')
     parser_train.add_argument('--num-processes', type=int, default=1, metavar='N',help='how many training processes to use (default: 1)')
-    parser_train.add_argument('--lr', metavar='value', help='learning rate', type=float, default=0.01)
+    parser_train.add_argument('--lr', metavar='value', help='learning rate', type=float, default=0.001)
     parser_train.add_argument('--momentum', type=float, default=0.5, metavar='value', help='SGD momentum (default: 0.5)')
     parser_train.add_argument('--batch-size', metavar='size', type=int, help='batch size', default=2*devcount)
     parser_train.add_argument('--iters', metavar='number', type=int, help='number of iterations to train for', default=100)
