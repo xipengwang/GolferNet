@@ -19,7 +19,8 @@ def parse(args):
     devcount = max(1, torch.cuda.device_count())
 
     parser_train = subparsers.add_parser('train', help='train a network')
-    parser_train.add_argument('model', type=str, help='path to output model or checkpoint to resume from')
+    parser_train.add_argument('data', type=str, help='path to input data dir')
+    parser_train.add_argument('--model', type=str, help='path to output model or checkpoint to resume from')
     parser_train.add_argument('--num-processes', type=int, default=1, metavar='N',help='how many training processes to use (default: 1)')
     parser_train.add_argument('--lr', metavar='value', help='learning rate', type=float, default=0.001)
     parser_train.add_argument('--momentum', type=float, default=0.5, metavar='value', help='SGD momentum (default: 0.5)')
@@ -29,7 +30,8 @@ def parse(args):
     parser_train.add_argument('--log-interval', type=int, default=10, metavar='N', help='how many batches to wait before logging training status')
 
     parser_infer = subparsers.add_parser('infer', help='run inference')
-    parser_infer.add_argument('model', type=str, help='path to model')
+    parser_infer.add_argument('data', type=str, help='path to input data dir')
+    parser_infer.add_argument('--model', type=str, help='path to model')
     parser_infer.add_argument('--batch-size', metavar='size', type=int, help='batch size', default=2*devcount)
 
     return parser.parse_args(args)

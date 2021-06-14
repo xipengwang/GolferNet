@@ -5,47 +5,38 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from layers import Pool, Conv, Residual, Hourglass
+from loss import HeatmapLoss
 
-class CovModel(nn.Module):
-    def __init__(self, config={}):
-        super(Model, self).__init__()
-        num_classes=config.setdefault('num_classes', 10)
-        self.layer1 = nn.Sequential(
-            nn.Conv2d(1, 16, kernel_size=5, stride=1, padding=2),
-            nn.BatchNorm2d(16),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2))
-        self.layer2 = nn.Sequential(
-            nn.Conv2d(16, 32, kernel_size=5, stride=1, padding=2),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2))
-        self.fc = nn.Linear(7*7*32, num_classes)
+class Merge(nn.Module):
+    def __init__(self, x_dim, y_dim):
+        super(Merge, self).__init__()
+        self.conv = Conv(x_dim, y_dim, 1, relu=False, bn=False)
 
     def forward(self, x):
-        out = self.layer1(x)
-        out = self.layer2(out)
-        out = out.reshape(out.size(0), -1)
-        out = self.fc(out)
-        return out
-
+        return self.conv(x)
 
 class Model(nn.Module):
     def __init__(self, config={}):
         super(Model, self).__init__()
         self.num_stacks=config.setdefault('num_stacks', 1)
-        self.num_classes=config.setdefault('num_classes', 10)
-        self.inp_dim = 64
-        self.out_dim = 128
+        # image size = 512 x 512
+        inp_dim = config.setdefault('inp_dim', 256)
+        out_dim = config.setdefault('out_dim', 1)
+        self.inp_dim = inp_dim
+        self.out_dim = out_dim
         self.pre = nn.Sequential(
-            Conv(1, 64, kernel_size=3, stride=1, bn=True, relu=True),
-            Residual(64, 64),
+            Conv(3, 64, 7, stride=2, bn=True, relu=True),
+            Residual(64, 128),
             Pool(2, 2),
-            Residual(64, self.inp_dim)
+            Residual(128, 128),
+            Residual(128, inp_dim)
         )
+        # feature size = 128 x 128
+        n = config.setdefault('hourglass_components', 4)
+        n = 4 # 128->64(n=1)->32(n=2)->16(n=3)->8(n=1)
         self.hgs = nn.ModuleList( [
             nn.Sequential(
-                Hourglass(1, self.inp_dim, bn=False, increase=0),
+                Hourglass(n, self.inp_dim, bn=False, increase=0),
             ) for i in range(self.num_stacks)] )
 
         self.features = nn.ModuleList( [
@@ -54,20 +45,28 @@ class Model(nn.Module):
             Conv(self.inp_dim, self.inp_dim, 1, bn=True, relu=True)
         ) for i in range(self.num_stacks)] )
 
-        self.out = nn.Sequential(
-            Conv(self.inp_dim, 64, kernel_size=3, stride=1, bn=True, relu=True),
-            Residual(64, 64),
-            Pool(2, 2),
-            Residual(64, self.out_dim)
-        )
-        self.fc = nn.Linear(7*7*128, self.num_classes)
+        self.merge_features = nn.ModuleList( [Merge(inp_dim, inp_dim) for i in range(self.num_stacks-1)] )
+        self.merge_preds = nn.ModuleList( [Merge(out_dim, inp_dim) for i in range(self.num_stacks-1)] )
+
+        self.outs = nn.ModuleList( [Conv(inp_dim, out_dim, 1, relu=False, bn=False) for i in range(self.num_stacks)] )
+        self.heatmapLoss = HeatmapLoss()
 
     def forward(self, x):
-        out = self.pre(x)
+        x = self.pre(x)
+        combined_hm_preds = []
         for i in range(self.num_stacks):
-            hg = self.hgs[i](out)
-            out = self.features[i](hg)
-        out = self.out(out)
-        out = out.reshape(out.size(0), -1)
-        out = self.fc(out)
-        return out
+            hg = self.hgs[i](x)
+            feature = self.features[i](hg)
+            preds = self.outs[i](feature)
+            combined_hm_preds.append(preds)
+            if i < self.num_stacks - 1:
+                x = x + self.merge_preds[i](preds) + self.merge_features[i](feature)
+        return torch.stack(combined_hm_preds, 1)
+
+    def calc_loss(self, combined_hm_preds, heatmaps):
+        N, nstack, nclass, W, H= combined_hm_preds.shape
+        combined_loss = []
+        for i in range(self.num_stacks):
+            combined_loss.append(self.heatmapLoss(combined_hm_preds[:, i, :, :], heatmaps))
+        combined_loss = torch.stack(combined_loss, dim=1)
+        return combined_loss
