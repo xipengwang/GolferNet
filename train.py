@@ -133,13 +133,27 @@ def train_epoch(*, epoch, model, device, data_loader, optimizer, scheduler, args
         loss = model.calc_loss(combined_hm_preds=output, heatmaps=target.to(device))
         loss.backward()
         optimizer.step()
+
         if batch_idx % args.log_interval == 0:
             print(f'{pid}\tTrain Epoch: {epoch} \
             [{batch_idx * len(data)}/{len(data_loader.dataset)} \
             ({100. * batch_idx / len(data_loader):.0f}%)]\tLoss: {loss.item():.6f}')
             writer.add_scalar('Loss/train', loss.item(), global_step)
 
-        if global_step % 10 == 0:
+        im = data[0, :, :, :].permute(1, 2, 0).numpy()
+        cols, rows, channels = im.shape
+        im = cv.pyrDown(im, dstsize=(cols // 2, rows // 2))
+        cols, rows, channels = im.shape
+        im = cv.pyrDown(im, dstsize=(cols // 2, rows // 2))
+        plt.imsave('./plots/train-im.png', im)
+        heatmap = output[0, 0, :, :].permute(1, 2, 0).detach().numpy()
+        min_v = np.min(heatmap)
+        max_v = np.max(heatmap)
+        heatmap = (heatmap - min_v) / (max_v - min_v) * 255
+        # heatmap *= 255
+        cv.imwrite('./plots/train-heatmap.png', heatmap)
+
+        if True or global_step % 10 == 0:
             val_epoch(epoch=epoch, model=model, device=device, data_loader=val_loader, optimizer=optimizer, args=args,
                       global_step=global_step, writer=writer, rank=rank)
             for tag, value in model.named_parameters():
@@ -165,18 +179,18 @@ def val_epoch(*, epoch, model, device, data_loader, optimizer, args, global_step
         output = model(data.to(device))
         loss = model.calc_loss(combined_hm_preds=output, heatmaps=target.to(device))
 
-        # im = data[0, :, :, :].permute(1, 2, 0).numpy()
-        # cols, rows, channels = im.shape
-        # im = cv.pyrDown(im, dstsize=(cols // 2, rows // 2))
-        # cols, rows, channels = im.shape
-        # im = cv.pyrDown(im, dstsize=(cols // 2, rows // 2))
-        # plt.imsave('./plots/im.png', im)
-        # heatmap = output[0, 0, :, :].permute(1, 2, 0).detach().numpy()
-        # #min_v = np.min(heatmap)
-        # #max_v = np.max(heatmap)
-        # #heatmap = (heatmap - min_v) / (max_v - min_v) * 255
+        im = data[0, :, :, :].permute(1, 2, 0).numpy()
+        cols, rows, channels = im.shape
+        im = cv.pyrDown(im, dstsize=(cols // 2, rows // 2))
+        cols, rows, channels = im.shape
+        im = cv.pyrDown(im, dstsize=(cols // 2, rows // 2))
+        plt.imsave('./plots/val-im.png', im)
+        heatmap = output[0, 0, :, :].permute(1, 2, 0).detach().numpy()
+        min_v = np.min(heatmap)
+        max_v = np.max(heatmap)
+        heatmap = (heatmap - min_v) / (max_v - min_v) * 255
         # heatmap *= 255
-        # cv.imwrite('./plots/heatmap.png', heatmap)
+        cv.imwrite('./plots/val-heatmap.png', heatmap)
 
         if batch_idx % args.log_interval == 0:
             print(f'{pid}\tVal Epoch: {epoch} \
