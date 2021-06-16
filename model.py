@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from layers import Pool, Conv, Residual, Hourglass
-from loss import HeatmapLoss
+from loss import HeatmapLoss, FocalLoss
 
 class Merge(nn.Module):
     def __init__(self, x_dim, y_dim):
@@ -49,7 +49,8 @@ class Model(nn.Module):
         self.merge_preds = nn.ModuleList( [Merge(out_dim, inp_dim) for i in range(self.num_stacks-1)] )
 
         self.outs = nn.ModuleList( [Conv(inp_dim, out_dim, 1, relu=False, bn=False) for i in range(self.num_stacks)] )
-        self.heatmapLoss = HeatmapLoss()
+        # self.loss_func = HeatmapLoss()
+        self.loss_func = FocalLoss()
 
     def forward(self, x):
         x = self.pre(x)
@@ -58,7 +59,8 @@ class Model(nn.Module):
             hg = self.hgs[i](x)
             feature = self.features[i](hg)
             preds = self.outs[i](feature)
-            combined_hm_preds.append(preds)
+            prob = preds.sigmoid()
+            combined_hm_preds.append(prob)
             if i < self.num_stacks - 1:
                 x = x + self.merge_preds[i](preds) + self.merge_features[i](feature)
         return torch.stack(combined_hm_preds, 1)
@@ -67,6 +69,7 @@ class Model(nn.Module):
         N, nstack, nclass, W, H= combined_hm_preds.shape
         combined_loss = []
         for i in range(self.num_stacks):
-            combined_loss.append(self.heatmapLoss(combined_hm_preds[:, i, :, :], heatmaps))
-        combined_loss = torch.stack(combined_loss, dim=1)
-        return combined_loss
+            loss = self.loss_func(combined_hm_preds[:, i, :, :], heatmaps)
+            combined_loss.append(loss)
+        combined_loss = torch.stack(combined_loss, dim=0)
+        return combined_loss.mean()

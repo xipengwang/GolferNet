@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 
 from torch.utils.tensorboard import SummaryWriter
 
+
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '10240'
@@ -55,8 +56,6 @@ class GolfPoseDataset(Dataset):
         target = np.zeros((1, 128, 128))
         target[0, int(keypoint[1]/4), int(keypoint[0]/4)] = 1
         target[0, :, :] = cv.GaussianBlur(target[0, :, :], (5, 5), 0)
-        # plt.imshow(np.transpose(target,(1,2,0)), cmap='gray')
-        # plt.show()
 
         if self.transform:
             image = self.transform(image)
@@ -90,6 +89,7 @@ def train(rank, model, state, args):
 
     torch.manual_seed(rank)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10, eta_min=0.001)
 
     model.to(device)
     train_sampler = None
@@ -117,22 +117,20 @@ def train(rank, model, state, args):
     for epoch in range(args.iters):
         if train_sampler:
             train_sampler.set_epoch(epoch)
-        global_step = train_epoch(epoch=epoch, model=model, device=device, data_loader=train_loader, optimizer=optimizer, args=args,
+        global_step = train_epoch(epoch=epoch, model=model, device=device, data_loader=train_loader, optimizer=optimizer, scheduler=scheduler, args=args,
                                   global_step=global_step, writer=writer, rank=rank, val_loader=val_loader)
     if state['use_cuda']:
         cleanup()
 
-def train_epoch(*, epoch, model, device, data_loader, optimizer, args, global_step, writer, rank, val_loader):
+def train_epoch(*, epoch, model, device, data_loader, optimizer, scheduler, args, global_step, writer, rank, val_loader):
     model.train()
     pid = os.getpid()
-    criterion = nn.CrossEntropyLoss().to(device)
     for batch_idx, (sample, image_name) in enumerate(data_loader):
         data = sample['image']
         target = sample['label']
         optimizer.zero_grad()
         output = model(data.to(device))
         loss = model.calc_loss(combined_hm_preds=output, heatmaps=target.to(device))
-        loss = loss.mean(dim=1).mean(dim=0)
         loss.backward()
         optimizer.step()
         if batch_idx % args.log_interval == 0:
@@ -141,7 +139,7 @@ def train_epoch(*, epoch, model, device, data_loader, optimizer, args, global_st
             ({100. * batch_idx / len(data_loader):.0f}%)]\tLoss: {loss.item():.6f}')
             writer.add_scalar('Loss/train', loss.item(), global_step)
 
-        if True or global_step % (10 * args.batch_size) == 0:
+        if global_step % 10 == 0:
             val_epoch(epoch=epoch, model=model, device=device, data_loader=val_loader, optimizer=optimizer, args=args,
                       global_step=global_step, writer=writer, rank=rank)
             for tag, value in model.named_parameters():
@@ -154,25 +152,32 @@ def train_epoch(*, epoch, model, device, data_loader, optimizer, args, global_st
             if rank == 0:
                 pass
                 # torch.save(model.state_dict(), args.model+f'-epoch-{epoch}-step-{global_step}')
+            scheduler.step()
         global_step += 1
     return global_step
 
 def val_epoch(*, epoch, model, device, data_loader, optimizer, args, global_step, writer, rank):
     model.eval()
     pid = os.getpid()
-    criterion = nn.CrossEntropyLoss().to(device)
     for batch_idx, (sample, image_name) in enumerate(data_loader):
         data = sample['image']
         target = sample['label']
         output = model(data.to(device))
-        plt.figure()
-        f, ax = plt.subplots(2, 1)
-        ax[0].imshow(data[0, :, :, :].permute(1, 2, 0))
-        ax[1].imshow(output[0, 0, :, :].permute(1, 2, 0).detach().numpy() , cmap='gray')
-        # plt.imshow(np.transpose(target,(1,2,0)), cmap='gray')
-        plt.show()
         loss = model.calc_loss(combined_hm_preds=output, heatmaps=target.to(device))
-        loss = loss.mean(dim=1).mean(dim=0)
+
+        # im = data[0, :, :, :].permute(1, 2, 0).numpy()
+        # cols, rows, channels = im.shape
+        # im = cv.pyrDown(im, dstsize=(cols // 2, rows // 2))
+        # cols, rows, channels = im.shape
+        # im = cv.pyrDown(im, dstsize=(cols // 2, rows // 2))
+        # plt.imsave('./plots/im.png', im)
+        # heatmap = output[0, 0, :, :].permute(1, 2, 0).detach().numpy()
+        # #min_v = np.min(heatmap)
+        # #max_v = np.max(heatmap)
+        # #heatmap = (heatmap - min_v) / (max_v - min_v) * 255
+        # heatmap *= 255
+        # cv.imwrite('./plots/heatmap.png', heatmap)
+
         if batch_idx % args.log_interval == 0:
             print(f'{pid}\tVal Epoch: {epoch} \
             [{batch_idx * len(data)}/{len(data_loader.dataset)} \
@@ -206,7 +211,7 @@ def test_epoch(*, epoch, model, state, data_loader, args):
     with torch.no_grad():
         for data, target in data_loader:
             output = model(data.to(device))
-            test_loss += criterion(output, target)
+            test_loss += model.calc_loss(output, target)
 
     test_loss /= len(data_loader.dataset)
     print(f'\nTest set: Average loss: {test_loss:.4f}')
