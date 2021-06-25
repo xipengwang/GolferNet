@@ -21,7 +21,7 @@ class Model(nn.Module):
         self.num_stacks=config.setdefault('num_stacks', 1)
         # image size = 512 x 512
         inp_dim = config.setdefault('inp_dim', 256)
-        out_dim = config.setdefault('out_dim', 1)
+        out_dim = config.setdefault('out_dim', 18)
         self.inp_dim = inp_dim
         self.out_dim = out_dim
         self.pre = nn.Sequential(

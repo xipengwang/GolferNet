@@ -72,19 +72,25 @@ class GolfPoseDataset(Dataset):
         label = self.labels[idx]
         img_name = self.imgs[idx]
         img_bgr = cv.imread(img_name)
-        image = cv.cvtColor(img_bgr, cv.COLOR_BGR2RGB)
-        np.transpose(image, (2, 0, 1))
-        #  "width": 960,
-        #  "height": 540,
+        crop_img = img_bgr[14:-14, 224:-224, :] # 512x512
+        image = cv.cvtColor(crop_img, cv.COLOR_BGR2RGB)
+
+        #  "width": 512
+        #  "height": 512,
         #  "depth": 3
         #  TODO: crop images
-        width = int(960/4)
-        height = int(540/4)
+        width = int(512/4)
+        height = int(512/4)
         target = np.zeros((self.nclass, height, width))
         for key, val in label.items():
             for (c, center) in val:
-                target[c, int(center[0]/4), int(center[1]/4)] = 1
-
+                # radius = 3
+                # color = (255, 0, 0)
+                # thickness = 2
+                center_coordinates = (int(center[1]-224), int(center[0]-14))
+                # crop_img = cv.circle(crop_img, center_coordinates, radius, color, thickness)
+                target[c, int(center_coordinates[1]/4), int(center_coordinates[0]/4)] = 1
+        # cv.imwrite('/tmp/test.png', crop_img)
         for c in range(self.nclass):
             target[c, :, :] = cv.GaussianBlur(target[c, :, :], (5, 5), 0)
         if self.transform:
@@ -141,14 +147,14 @@ def train(rank, model, state, args):
     kwargs['batch_size'] = n_val
     val_loader = torch.utils.data.DataLoader(dataset=val_subset, **kwargs)
 
-    for batch_idx, (sample, image_name) in enumerate(train_loader):
-        print(image_name)
+    # for batch_idx, (sample, image_name) in enumerate(train_loader):
+    #     print(image_name)
 
-    print('----')
-    for batch_idx, (sample, image_name) in enumerate(val_loader):
-        print(image_name)
+    # print('----')
+    # for batch_idx, (sample, image_name) in enumerate(val_loader):
+    #     print(image_name)
 
-    return
+    # return
 
 
     global_step = 0
@@ -184,14 +190,14 @@ def train_epoch(*, epoch, model, device, data_loader, optimizer, scheduler, args
         cols, rows, channels = im.shape
         im = cv.pyrDown(im, dstsize=(cols // 2, rows // 2))
         plt.imsave('./plots/train-im.png', im)
-        heatmap = output[0, 0, :, :].permute(1, 2, 0).detach().numpy()
+        heatmap = output[0, 0, :, :].detach().numpy()
         min_v = np.min(heatmap)
         max_v = np.max(heatmap)
         heatmap = (heatmap - min_v) / (max_v - min_v) * 255
         # heatmap *= 255
-        cv.imwrite('./plots/train-heatmap.png', heatmap)
+        cv.imwrite('./plots/train-heatmap.png', heatmap[:, :, 0])
 
-        if True or global_step % 10 == 0:
+        if False and global_step % 10 == 0:
             val_epoch(epoch=epoch, model=model, device=device, data_loader=val_loader, optimizer=optimizer, args=args,
                       global_step=global_step, writer=writer, rank=rank)
             for tag, value in model.named_parameters():
@@ -228,7 +234,7 @@ def val_epoch(*, epoch, model, device, data_loader, optimizer, args, global_step
         max_v = np.max(heatmap)
         heatmap = (heatmap - min_v) / (max_v - min_v) * 255
         # heatmap *= 255
-        cv.imwrite('./plots/val-heatmap.png', heatmap)
+        cv.imwrite('./plots/val-heatmap.png', heatmap[:, :, 0])
 
         if batch_idx % args.log_interval == 0:
             print(f'{pid}\tVal Epoch: {epoch} \
