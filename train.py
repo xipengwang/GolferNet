@@ -1,4 +1,5 @@
 import os
+import json
 import glob
 import torch
 import torch.nn as nn
@@ -15,6 +16,27 @@ import matplotlib.pyplot as plt
 
 from torch.utils.tensorboard import SummaryWriter
 
+def read_labels(label_root):
+    data = []
+    class_map = None
+    for json_file in glob.glob(os.path.join(label_root, '*.json')):
+        with open(json_file, 'r') as f:
+            labels = json.load(f)
+            for label in labels:
+                idx = label['datasetObjectId']
+                content = label['consolidatedAnnotation']['content']
+                class_map_ = content['Human-Pose-metadata']['class-map']
+                if class_map is None or len(class_map_.items()) > len(class_map.items()):
+                    class_map = class_map_
+                annotations = content['Human-Pose']['annotations']
+                centers = []
+                for annotation in annotations:
+                    class_id = annotation['class_id']
+                    center = (annotation['top']+annotation['height']/2.0, annotation['left']+annotation['width']/2.0)
+                    centers.append((int(class_id),center))
+                data.append({idx:centers})
+    return data, class_map
+
 
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
@@ -29,34 +51,42 @@ def cleanup():
 class GolfPoseDataset(Dataset):
     def __init__(self, root_dir, transform=None):
         self.root_dir = root_dir
-        self.imgs = glob.glob(os.path.join(self.root_dir, '*.png'))
-        self.imgs.sort()
+        self.labels, self.class_map = read_labels(os.path.join(self.root_dir, 'labels'))
+        self.nclass = len(self.class_map.items())
+        imgs_tmp = glob.glob(os.path.join(self.root_dir, 'images/*.png'))
+        self.imgs = []
+        for label in self.labels:
+            key, val = next(iter(label.items()))
+            for img in imgs_tmp:
+                if int(key) == int(os.path.basename(img).split('.')[0]):
+                    self.imgs.append(img)
         self.transform = transform
 
     def __len__(self):
-        return len(self.imgs)
+        return len(self.labels)
 
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
+        label = self.labels[idx]
         img_name = self.imgs[idx]
         img_bgr = cv.imread(img_name)
         image = cv.cvtColor(img_bgr, cv.COLOR_BGR2RGB)
         np.transpose(image, (2, 0, 1))
-        keypoint = None
-        if '0' in img_name:
-            keypoint = torch.tensor([110-14, 317-14])
-        elif '1' in img_name:
-            keypoint = torch.tensor([105-14, 306-14])
-        elif '2' in img_name:
-            keypoint = torch.tensor([102-14, 296-14])
-        elif '3' in img_name:
-            keypoint = torch.tensor([100-14, 286-14])
-        target = np.zeros((1, 128, 128))
-        target[0, int(keypoint[1]/4), int(keypoint[0]/4)] = 1
-        target[0, :, :] = cv.GaussianBlur(target[0, :, :], (5, 5), 0)
+        #  "width": 960,
+        #  "height": 540,
+        #  "depth": 3
+        #  TODO: crop images
+        width = int(960/4)
+        height = int(540/4)
+        target = np.zeros((self.nclass, height, width))
+        for key, val in label.items():
+            for (c, center) in val:
+                target[c, int(center[0]/4), int(center[1]/4)] = 1
 
+        for c in range(self.nclass):
+            target[c, :, :] = cv.GaussianBlur(target[c, :, :], (5, 5), 0)
         if self.transform:
             image = self.transform(image)
         sample = {'image': image, 'label': target}
@@ -72,8 +102,6 @@ def train(rank, model, state, args):
 
     n_val = int(len(dataset) * args.val_percent)
     n_train = len(dataset) - n_val
-    n_val = 2
-    n_train = 2
     train_subset, val_subset = torch.utils.data.random_split(
         dataset,  [n_train, n_val], generator=torch.Generator().manual_seed(1))
 
@@ -112,6 +140,16 @@ def train(rank, model, state, args):
     train_loader = torch.utils.data.DataLoader(dataset=train_subset, **kwargs)
     kwargs['batch_size'] = n_val
     val_loader = torch.utils.data.DataLoader(dataset=val_subset, **kwargs)
+
+    for batch_idx, (sample, image_name) in enumerate(train_loader):
+        print(image_name)
+
+    print('----')
+    for batch_idx, (sample, image_name) in enumerate(val_loader):
+        print(image_name)
+
+    return
+
 
     global_step = 0
     for epoch in range(args.iters):
